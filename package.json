@@ -1,3 +1,8 @@
-"dependencies": {
-  "comcigan-parser": "^0.0.23"
-}
+"
+{
+  "name": "school-timetable-meal",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "comcigan": "^3.0.4"
+  }
