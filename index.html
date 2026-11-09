@@ -34,7 +34,8 @@ td b{display:block;font-size:14px}td span{color:var(--sub);font-size:11px}td.n{w
 
 <div id="main" class="hide">
   <div class="card row">
-    <select id="grade"></select><select id="cls"></select>
+    <select id="cls" aria-label="반 선택"></select>
+    <select id="week" aria-label="주 선택"><option value="0">이번 주</option><option value="1">다음 주</option></select>
     <button id="change" style="margin-left:auto">학교 변경</button>
   </div>
   <div class="tabs"><button id="tT" class="on">시간표</button><button id="tM">급식</button></div>
@@ -44,19 +45,22 @@ td b{display:block;font-size:14px}td span{color:var(--sub);font-size:11px}td.n{w
 
 <script>
 const $=id=>document.getElementById(id), DAY=['월','화','수','목','금'];
-let school=JSON.parse(localStorage.getItem('school')||'null'), TT=null, MEALS=[], sel={g:localStorage.getItem('g'),c:localStorage.getItem('c')};
-const today=new Date(), wd=today.getDay()-1;
+let school=JSON.parse(localStorage.getItem('school')||'null'), TT=null, MEALS=[], W=0, K=localStorage.getItem('k');
+const today=new Date(), wd=today.getDay()-1; // 0=월
 const ymd=d=>d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
-const monday=new Date(today); monday.setDate(today.getDate()-((today.getDay()+6)%7));
-const weekDates=[0,1,2,3,4].map(i=>{const d=new Date(monday);d.setDate(monday.getDate()+i);return d});
+function weekDates(off){const m=new Date(today);m.setDate(today.getDate()-((today.getDay()+6)%7)+off*7);
+  return [0,1,2,3,4].map(i=>{const d=new Date(m);d.setDate(m.getDate()+i);return d})}
 
 $('go').onclick=async()=>{
   const q=$('q').value.trim(); if(!q)return;
   $('res').innerHTML='<div class="empty">검색 중…</div>';
-  const list=await (await fetch('/api/school?q='+encodeURIComponent(q))).json();
-  $('res').innerHTML=list.length?'':'<div class="empty">중·고등학교 검색 결과가 없어요</div>';
-  list.forEach(s=>{const d=document.createElement('div');d.innerHTML=`${s.name}<small>${s.atptName} · ${s.addr||''}</small>`;
-    d.onclick=()=>{school=s;localStorage.setItem('school',JSON.stringify(s));start()};$('res').appendChild(d)});
+  try{
+    const list=await (await fetch('/api/school?q='+encodeURIComponent(q))).json();
+    if(!Array.isArray(list))throw new Error(list.error||'검색 실패');
+    $('res').innerHTML=list.length?'':'<div class="empty">중·고등학교 검색 결과가 없어요</div>';
+    list.forEach(s=>{const d=document.createElement('div');d.innerHTML=`${s.name}<small>${s.atptName} · ${s.addr||''}</small>`;
+      d.onclick=()=>{school=s;localStorage.setItem('school',JSON.stringify(s));start()};$('res').appendChild(d)});
+  }catch(e){$('res').innerHTML='<div class="empty">검색하지 못했어요<br>'+e.message+'</div>'}
 };
 $('q').onkeydown=e=>{if(e.key==='Enter')$('go').click()};
 $('change').onclick=()=>{$('main').classList.add('hide');$('search').classList.remove('hide')};
@@ -65,41 +69,46 @@ function tab(t){$('vT').classList.toggle('hide',!t);$('vM').classList.toggle('hi
 
 async function start(){
   $('search').classList.add('hide');$('main').classList.remove('hide');
-  $('title').textContent=school.name;$('sub').textContent='이번 주 시간표와 급식';
+  $('title').textContent=school.name;$('sub').textContent='시간표와 급식';
   $('vT').innerHTML='<div class="empty">불러오는 중…</div>';
   loadMeals();
   try{
     const r=await fetch(`/api/timetable?name=${encodeURIComponent(school.name)}&atptName=${encodeURIComponent(school.atptName)}`);
     TT=await r.json(); if(TT.error) throw new Error(TT.error);
-  }catch(e){$('vT').innerHTML='<div class="empty">시간표를 불러오지 못했어요<br>'+e.message+'</div>';return}
-  const gs=Object.keys(TT);$('grade').innerHTML=gs.map(g=>`<option value="${g}">${g}학년</option>`).join('');
-  if(gs.includes(sel.g))$('grade').value=sel.g;
+  }catch(e){TT=null;$('vT').innerHTML='<div class="empty">시간표를 불러오지 못했어요<br>'+e.message+'</div>';return}
   fillCls();
 }
 function fillCls(){
-  const cs=Object.keys(TT[$('grade').value]);$('cls').innerHTML=cs.map(c=>`<option value="${c}">${c}반</option>`).join('');
-  if(cs.includes(sel.c))$('cls').value=sel.c;draw();
+  const ks=[];Object.keys(TT).forEach(g=>Object.keys(TT[g]).forEach(c=>ks.push(g+'-'+c)));
+  $('cls').innerHTML=ks.map(k=>{const[g,c]=k.split('-');return `<option value="${k}">${g}학년 ${c}반</option>`}).join('');
+  if(ks.includes(K))$('cls').value=K;
+  draw();
 }
-$('grade').onchange=()=>{sel.c=null;fillCls()};$('cls').onchange=draw;
+$('cls').onchange=draw;
+$('week').onchange=()=>{W=+$('week').value;draw();loadMeals()};
+
 function draw(){
-  const g=$('grade').value,c=$('cls').value;localStorage.setItem('g',g);localStorage.setItem('c',c);
-  const days=TT[g][c],max=Math.max(...days.map(d=>d.length));
-  let h='<table><tr><th class="n"></th>'+DAY.map((d,i)=>`<th class="${i===wd?'t':''}">${d}<br>${weekDates[i].getDate()}</th>`).join('')+'</tr>';
+  if(!TT||!$('cls').value)return;
+  const k=$('cls').value;K=k;localStorage.setItem('k',k);
+  if(W===1){$('vT').innerHTML='<div class="empty">다음 주 시간표는 아직 지원하지 않아요<br><small>급식 탭에서는 다음 주도 볼 수 있어요</small></div>';return}
+  const [g,c]=k.split('-'),days=TT[g][c],max=Math.max(...days.map(d=>d.length)),dates=weekDates(W);
+  let h='<table><tr><th class="n"></th>'+DAY.map((d,i)=>`<th class="${i===wd?'t':''}">${d}<br>${dates[i].getDate()}</th>`).join('')+'</tr>';
   for(let p=0;p<max;p++){h+=`<tr><td class="n">${p+1}</td>`;
     days.forEach((d,i)=>{const x=d[p];h+=`<td class="${i===wd?'t ':''}${x&&x.changed?'c':''}">${x&&x.subject?`<b>${x.subject}</b><span>${x.teacher}</span>`:''}</td>`});h+='</tr>'}
   $('vT').innerHTML=h+'</table>';
 }
 
 async function loadMeals(){
-  const u=`/api/meal?atpt=${school.atpt}&code=${school.code}&from=${ymd(weekDates[0])}`;
+  const u=`/api/meal?atpt=${school.atpt}&code=${school.code}&from=${ymd(weekDates(W)[0])}`;
   try{MEALS=await (await fetch(u)).json()}catch(e){MEALS=[]}
   $('days').innerHTML=DAY.map((d,i)=>`<button data-i="${i}">${d}</button>`).join('');
   $('days').onclick=e=>{if(e.target.dataset.i)showMeal(+e.target.dataset.i)};
-  showMeal(wd>=0&&wd<5?wd:0);
+  showMeal(W===0&&wd>=0&&wd<5?wd:0);
 }
 function showMeal(i){
   [...$('days').children].forEach((b,k)=>b.classList.toggle('on',k===i));
-  const list=Array.isArray(MEALS)?MEALS.filter(m=>m.date===ymd(weekDates[i])):[];
+  const day=ymd(weekDates(W)[i]);
+  const list=Array.isArray(MEALS)?MEALS.filter(m=>m.date===day):[];
   $('meals').innerHTML=list.length?list.map(m=>`<div class="card meal"><h3>${m.type} <small>${m.cal||''}</small></h3><ul>${m.dishes.map(d=>`<li>${d.replace(/\s*\([\d.\s]+\)/g,'')}</li>`).join('')}</ul></div>`).join(''):'<div class="card empty">급식 정보가 없어요</div>';
 }
 if(school)start();
