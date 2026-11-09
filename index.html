@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>우리학교 시간표·급식</title>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--tx:#1c1f26;--sub:#7a8090;--ac:#3b6cf6;--ln:#e6e8ef;--today:#eef3ff;--chg:#fff3a8}
+@media(prefers-color-scheme:dark){:root{--bg:#12141a;--card:#1c1f27;--tx:#eceef3;--sub:#8b92a3;--ac:#6c92ff;--ln:#2a2e38;--today:#222c47;--chg:#5c4f10}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,"Pretendard","Noto Sans KR",sans-serif;padding:env(safe-area-inset-top) 12px 40px}
+.wrap{max-width:720px;margin:0 auto}h1{font-size:20px;margin:18px 4px 4px}.sub{color:var(--sub);font-size:13px;margin:0 4px 12px}
+.card{background:var(--card);border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+input,select,button{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--ln);border-radius:10px;padding:9px 12px}
+button{cursor:pointer}button.p{background:var(--ac);color:#fff;border:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row input{flex:1;min-width:0}
+.res div{padding:10px 4px;border-top:1px solid var(--ln);cursor:pointer}.res small{color:var(--sub);display:block}
+.tabs{display:flex;gap:6px;margin-bottom:12px}.tabs button{flex:1}.tabs .on{background:var(--ac);color:#fff;border-color:var(--ac)}
+table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:center;font-size:13px}
+th{color:var(--sub);font-weight:600;padding:8px 2px}th.t{color:var(--ac)}
+td{border-top:1px solid var(--ln);padding:8px 2px;height:56px;vertical-align:middle}td.t{background:var(--today)}td.c{background:var(--chg)}
+td b{display:block;font-size:14px}td span{color:var(--sub);font-size:11px}td.n{width:28px;color:var(--sub)}
+.days{display:flex;gap:6px;margin-bottom:10px}.days button{flex:1;padding:8px 0}.days .on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.meal h3{margin:0 0 8px;font-size:15px}.meal ul{margin:0;padding-left:18px;line-height:1.7}.meal small{color:var(--sub)}
+.empty{color:var(--sub);text-align:center;padding:20px 0}.hide{display:none}
+</style>
+</head>
+<body><div class="wrap">
+<h1 id="title">우리학교 시간표·급식</h1><p class="sub" id="sub">중학교·고등학교를 검색해보세요</p>
+
+<div class="card" id="search">
+  <div class="row"><input id="q" placeholder="학교 이름 (예: 산내중학교)"><button class="p" id="go">검색</button></div>
+  <div class="res" id="res"></div>
+</div>
+
+<div id="main" class="hide">
+  <div class="card row">
+    <select id="grade"></select><select id="cls"></select>
+    <button id="change" style="margin-left:auto">학교 변경</button>
+  </div>
+  <div class="tabs"><button id="tT" class="on">시간표</button><button id="tM">급식</button></div>
+  <div id="vT" class="card"></div>
+  <div id="vM" class="hide"><div class="days" id="days"></div><div id="meals"></div></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id), DAY=['월','화','수','목','금'];
+let school=JSON.parse(localStorage.getItem('school')||'null'), TT=null, MEALS=[], sel={g:localStorage.getItem('g'),c:localStorage.getItem('c')};
+const today=new Date(), wd=today.getDay()-1;
+const ymd=d=>d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+const monday=new Date(today); monday.setDate(today.getDate()-((today.getDay()+6)%7));
+const weekDates=[0,1,2,3,4].map(i=>{const d=new Date(monday);d.setDate(monday.getDate()+i);return d});
+
+$('go').onclick=async()=>{
+  const q=$('q').value.trim(); if(!q)return;
+  $('res').innerHTML='<div class="empty">검색 중…</div>';
+  const list=await (await fetch('/api/school?q='+encodeURIComponent(q))).json();
+  $('res').innerHTML=list.length?'':'<div class="empty">중·고등학교 검색 결과가 없어요</div>';
+  list.forEach(s=>{const d=document.createElement('div');d.innerHTML=`${s.name}<small>${s.atptName} · ${s.addr||''}</small>`;
+    d.onclick=()=>{school=s;localStorage.setItem('school',JSON.stringify(s));start()};$('res').appendChild(d)});
+};
+$('q').onkeydown=e=>{if(e.key==='Enter')$('go').click()};
+$('change').onclick=()=>{$('main').classList.add('hide');$('search').classList.remove('hide')};
+$('tT').onclick=()=>tab(true);$('tM').onclick=()=>tab(false);
+function tab(t){$('vT').classList.toggle('hide',!t);$('vM').classList.toggle('hide',t);$('tT').classList.toggle('on',t);$('tM').classList.toggle('on',!t)}
+
+async function start(){
+  $('search').classList.add('hide');$('main').classList.remove('hide');
+  $('title').textContent=school.name;$('sub').textContent='이번 주 시간표와 급식';
+  $('vT').innerHTML='<div class="empty">불러오는 중…</div>';
+  loadMeals();
+  try{
+    const r=await fetch(`/api/timetable?name=${encodeURIComponent(school.name)}&atptName=${encodeURIComponent(school.atptName)}`);
+    TT=await r.json(); if(TT.error) throw new Error(TT.error);
+  }catch(e){$('vT').innerHTML='<div class="empty">시간표를 불러오지 못했어요<br>'+e.message+'</div>';return}
+  const gs=Object.keys(TT);$('grade').innerHTML=gs.map(g=>`<option value="${g}">${g}학년</option>`).join('');
+  if(gs.includes(sel.g))$('grade').value=sel.g;
+  fillCls();
+}
+function fillCls(){
+  const cs=Object.keys(TT[$('grade').value]);$('cls').innerHTML=cs.map(c=>`<option value="${c}">${c}반</option>`).join('');
+  if(cs.includes(sel.c))$('cls').value=sel.c;draw();
+}
+$('grade').onchange=()=>{sel.c=null;fillCls()};$('cls').onchange=draw;
+function draw(){
+  const g=$('grade').value,c=$('cls').value;localStorage.setItem('g',g);localStorage.setItem('c',c);
+  const days=TT[g][c],max=Math.max(...days.map(d=>d.length));
+  let h='<table><tr><th class="n"></th>'+DAY.map((d,i)=>`<th class="${i===wd?'t':''}">${d}<br>${weekDates[i].getDate()}</th>`).join('')+'</tr>';
+  for(let p=0;p<max;p++){h+=`<tr><td class="n">${p+1}</td>`;
+    days.forEach((d,i)=>{const x=d[p];h+=`<td class="${i===wd?'t ':''}${x&&x.changed?'c':''}">${x&&x.subject?`<b>${x.subject}</b><span>${x.teacher}</span>`:''}</td>`});h+='</tr>'}
+  $('vT').innerHTML=h+'</table>';
+}
+
+async function loadMeals(){
+  const u=`/api/meal?atpt=${school.atpt}&code=${school.code}&from=${ymd(weekDates[0])}`;
+  try{MEALS=await (await fetch(u)).json()}catch(e){MEALS=[]}
+  $('days').innerHTML=DAY.map((d,i)=>`<button data-i="${i}">${d}</button>`).join('');
+  $('days').onclick=e=>{if(e.target.dataset.i)showMeal(+e.target.dataset.i)};
+  showMeal(wd>=0&&wd<5?wd:0);
+}
+function showMeal(i){
+  [...$('days').children].forEach((b,k)=>b.classList.toggle('on',k===i));
+  const list=Array.isArray(MEALS)?MEALS.filter(m=>m.date===ymd(weekDates[i])):[];
+  $('meals').innerHTML=list.length?list.map(m=>`<div class="card meal"><h3>${m.type} <small>${m.cal||''}</small></h3><ul>${m.dishes.map(d=>`<li>${d.replace(/\s*\([\d.\s]+\)/g,'')}</li>`).join('')}</ul></div>`).join(''):'<div class="card empty">급식 정보가 없어요</div>';
+}
+if(school)start();
+</script>
+</div></body></html>
